@@ -37,12 +37,12 @@ def input_fn(
     )
 
     return dataset
-# os.environ['TFHUB_CACHE_DIR'] = '/hub_chace'
-# embed = hub.KerasLayer("https://tfhub.dev/google/universal-sentence-encoder/4")
  
 # Vocab size and number of words in a sequence.
 VOCAB_SIZE = 10000
 SEQUENCE_LENGTH = 100
+embed_dim = 16
+epochs = 25
 
 vectorize_layer = layers.TextVectorization(
     standardize = "lower_and_strip_punctuation",
@@ -50,15 +50,15 @@ vectorize_layer = layers.TextVectorization(
     output_mode = 'int',
     output_sequence_length = SEQUENCE_LENGTH
 )
+vectorize_layer.adapt(train_set.map(lambda x, _: x[transformed_name(FEATURE_KEY)]))
 
 
-def model_builder(hp):
+
+def model_builder():
     """Build ML model"""
-    embed_dim = hp.Int("embedding_dim", min_value=6, max_value=128, steps=32)
-    
     inputs = tf.keras.Input(shape=(1,), name=transformed_name(FEATURE_KEY), dtype=tf.string)
-    reshaped_narrative = tf.reshape(inputs, [-1])
-    x = vectorize_layer(reshaped_narrative)
+    # reshaped_narrative = tf.reshape(inputs, [-1])
+    x = vectorize_layer(inputs)
     x = layers.Embedding(VOCAB_SIZE, embed_dim, name="embedding")(x)
     x = layers.GlobalAveragePooling1D()(x)
     x = layers.Dense(64, activation='relu')(x)
@@ -128,7 +128,7 @@ def run_fn(fn_args: FnArgs) -> None:
         callbacks = [tensorboard_callback, es, mc],
         steps_per_epoch = 100,
         validation_steps = 100,
-        epochs = 10
+        epochs = epochs
     )
 
     signatures = {
