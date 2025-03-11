@@ -11,7 +11,7 @@ from tensorflow.keras.layers import LeakyReLU
 LABEL_KEY = "label"
 FEATURE_KEY = "text"
 VOCAB_SIZE = 10000
-epochs = 20
+epochs = 5
 
 TunerFnResult = NamedTuple(
     "TunerFnResult", [("tuner", base_tuner.BaseTuner), ("fit_kwargs", Dict[Text, Any])]
@@ -49,18 +49,16 @@ def input_fn(
 
 def model_builder(hp, vectorizer):
     ### Define parameter yang digunakan untuk tuning
-    num_layer = hp.Int("num_layer", min_value=1, max_value=6, step=1)
+    num_layer = hp.Int("num_layer", min_value=1, max_value=5, step=1)
     embed_dim = hp.Int("embed_dim", min_value=16, max_value=128, step=32)
-    fc_layer = hp.Int("fc_layer", min_value=16, max_value=64, step=16)
-    lstm_units = hp.Int("lstm_units", min_value=32, max_value=128, step=32)
+    fc_layer = hp.Int("fc_layer", min_value=32, max_value=128, step=16)
     lr = hp.Choice("lr", values=[1e-2, 1e-3, 1e-4])
 
     inputs = tf.keras.Input(shape=(1,), name=transformed_name(FEATURE_KEY), dtype=tf.string)
     x = vectorizer(inputs)
     x = layers.Embedding(VOCAB_SIZE, embed_dim, name="embedding")(x)
-    x = layers.Bidirectional(layers.LSTM(lstm_units, return_sequences=False))(x)
+    x = layers.GlobalAveragePooling1D()(x)
     x = layers.Dropout(0.2)(x)
-
     for _ in range(num_layer):
         x = layers.Dense(fc_layer, activation='relu')(x)
     
@@ -93,9 +91,20 @@ def tuner_fn(fn_args):
     vectorize_layer.adapt(train_set.map(lambda x, _: x[transformed_name(FEATURE_KEY)]))
 
     # Callback untuk early stopping
-    stop_early = tf.keras.callbacks.EarlyStopping(monitor='val_sparse_categorical_accuracy', patience=5)
+    stop_early = tf.keras.callbacks.EarlyStopping(
+        monitor='val_sparse_categorical_accuracy', 
+        mode='max', 
+        verbose=1, 
+        patience=15
+    )
 
     # Mendefinisikan strategi hyperparameter tuning
+    # tuner = kt.RandomSearch(
+    #     hypermodel = lambda hp: model_builder(hp, vectorize_layer),
+    #     objective = 'val_sparse_categorical_accuracy',
+    #     max_trials = epochs,
+    #     seed = 28,
+    # )
     tuner = kt.Hyperband(
         lambda hp: model_builder(hp, vectorize_layer),
         objective = 'val_sparse_categorical_accuracy',

@@ -1,9 +1,10 @@
 
+import os
 import tensorflow as tf
+import tensorflow_hub as hub
+# import tensorflow_text as text
 import tensorflow_transform as tft
 from tensorflow.keras import layers
-import os
-import tensorflow_hub as hub
 from tfx.components.trainer.fn_args_utils import FnArgs
 
 LABEL_KEY = "label"
@@ -44,35 +45,26 @@ SEQUENCE_LENGTH = 100
 embed_dim = 16
 epochs = 25
 
-vectorize_layer = layers.TextVectorization(
-    standardize = "lower_and_strip_punctuation",
-    max_tokens = VOCAB_SIZE,
-    output_mode = 'int',
-    output_sequence_length = SEQUENCE_LENGTH
-)
-vectorize_layer.adapt(train_set.map(lambda x, _: x[transformed_name(FEATURE_KEY)]))
-
-
-
-def model_builder():
+def model_builder(hp, vectorizer):
     """Build ML model"""
     inputs = tf.keras.Input(shape=(1,), name=transformed_name(FEATURE_KEY), dtype=tf.string)
-    # reshaped_narrative = tf.reshape(inputs, [-1])
-    x = vectorize_layer(inputs)
-    x = layers.Embedding(VOCAB_SIZE, embed_dim, name="embedding")(x)
+    x = vectorizer(inputs)
+    x = layers.Embedding(VOCAB_SIZE, hp.get("embed_dim"), name="embedding")(x)
     x = layers.GlobalAveragePooling1D()(x)
-    x = layers.Dense(64, activation='relu')(x)
-    x = layers.Dense(32, activation='relu')(x)
+
+    for _ in range(hp.get("num_layer")):
+        x = layers.Dense(hp.get("fc_layer"), activation='relu')(x)
+    
+    x = layers.Dropout(0.2)(x)
     outputs = layers.Dense(3, activation='softmax')(x)
 
-    model = tf.keras.Model(inputs=inputs, outputs = outputs)
+    model = tf.keras.Model(inputs=inputs, outputs=outputs)
     model.compile(
         loss = tf.keras.losses.SparseCategoricalCrossentropy(),
-        optimizer = tf.keras.optimizers.Adam(0.01),
-        metrics = [tf.keras.metrics.BinaryAccuracy()]
+        optimizer = tf.keras.optimizers.Adam(learning_rate=hp.get("lr")),
+        metrics = [tf.keras.metrics.SparseCategoricalAccuracy()]
     )
 
-    # print
     model.summary()
     return model
 
@@ -102,24 +94,38 @@ def run_fn(fn_args: FnArgs) -> None:
         log_dir = log_dir, update_freq='batch'
     )
 
-    es = tf.keras.callbacks.EarlyStopping(monitor='val_binary_accuracy', mode='max', verbose=1, patience=10)
-    mc = tf.keras.callbacks.ModelCheckpoint(fn_args.serving_model_dir, monitor='val_binary_accuracy', mode='max', verbose=1, save_best_only=True)
+    es = tf.keras.callbacks.EarlyStopping(
+        monitor='val_sparse_categorical_accuracy', 
+        mode='max', 
+        verbose=1, 
+        patience=10
+    )
+    mc = tf.keras.callbacks.ModelCheckpoint(
+        fn_args.serving_model_dir, 
+        monitor='val_sparse_categorical_accuracy', 
+        mode='max', 
+        verbose=1, 
+        save_best_only=True
+    )
+    hp = fn_args.hyperparameters.get("values")
 
     # Load the transform output
     tf_transform_output = tft.TFTransformOutput(fn_args.transform_graph_path)
 
     # Create bacthes of data
-    train_set = input_fn(fn_args.train_files, tf_transform_output, 10)
-    val_set = input_fn(fn_args.eval_files, tf_transform_output, 10)
-    vectorize_layer.adapt(
-        [j[0].numpy()[0] for j in [
-            i[0][transformed_name(FEATURE_KEY)]
-            for i in list(train_set)
-        ]]
+    train_set = input_fn(fn_args.train_files, tf_transform_output, hp.get("tuner/epochs"))
+    val_set = input_fn(fn_args.eval_files, tf_transform_output, hp.get("tuner/epochs"))
+    vectorize_layer = layers.TextVectorization(
+        standardize = "lower_and_strip_punctuation",
+        max_tokens = VOCAB_SIZE,
+        output_mode = 'int',
+        output_sequence_length = SEQUENCE_LENGTH
     )
+    vectorize_layer.adapt(train_set.map(lambda x, _: x[transformed_name(FEATURE_KEY)]))
+
 
     # Build Model
-    model = model_builder()
+    model = model_builder(hp, vectorize_layer)
 
     # Train the model
     model.fit(
