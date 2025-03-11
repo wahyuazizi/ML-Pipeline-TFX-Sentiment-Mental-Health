@@ -7,8 +7,8 @@ import tensorflow_transform as tft
 from tensorflow.keras import layers
 from tfx.components.trainer.fn_args_utils import FnArgs
 
-LABEL_KEY = "label"
-FEATURE_KEY = "text"
+LABEL_KEY = "oh_label"
+FEATURE_KEY = "Text"
 
 def transformed_name(key):
     return key + "_xf"
@@ -43,26 +43,29 @@ def input_fn(
 VOCAB_SIZE = 10000
 SEQUENCE_LENGTH = 100
 embed_dim = 16
-epochs = 25
+epochs = 50
 
 def model_builder(hp, vectorizer):
     """Build ML model"""
     inputs = tf.keras.Input(shape=(1,), name=transformed_name(FEATURE_KEY), dtype=tf.string)
-    x = vectorizer(inputs)
+    reshaped_narrative = tf.reshape(inputs, [-1])
+    x = vectorizer(reshaped_narrative)
     x = layers.Embedding(VOCAB_SIZE, hp.get("embed_dim"), name="embedding")(x)
     x = layers.GlobalAveragePooling1D()(x)
-
+    x = layers.Dropout(0.2)(x)
     for _ in range(hp.get("num_layer")):
         x = layers.Dense(hp.get("fc_layer"), activation='relu')(x)
+    # x = layers.Dense(64, activation='relu')(x)
+    # x = layers.Dense(32, activation="relu")(x)
     
     x = layers.Dropout(0.2)(x)
-    outputs = layers.Dense(3, activation='softmax')(x)
+    outputs = layers.Dense(1, activation='sigmoid')(x)
 
     model = tf.keras.Model(inputs=inputs, outputs=outputs)
     model.compile(
-        loss = tf.keras.losses.SparseCategoricalCrossentropy(),
+        loss = tf.keras.losses.BinaryCrossentropy(),
         optimizer = tf.keras.optimizers.Adam(learning_rate=hp.get("lr")),
-        metrics = [tf.keras.metrics.SparseCategoricalAccuracy()]
+        metrics = [tf.keras.metrics.BinaryAccuracy()]
     )
 
     model.summary()
@@ -95,14 +98,14 @@ def run_fn(fn_args: FnArgs) -> None:
     )
 
     es = tf.keras.callbacks.EarlyStopping(
-        monitor='val_sparse_categorical_accuracy', 
+        monitor='val_binary_accuracy', 
         mode='max', 
         verbose=1, 
         patience=10
     )
     mc = tf.keras.callbacks.ModelCheckpoint(
         fn_args.serving_model_dir, 
-        monitor='val_sparse_categorical_accuracy', 
+        monitor='val_binary_accuracy', 
         mode='max', 
         verbose=1, 
         save_best_only=True

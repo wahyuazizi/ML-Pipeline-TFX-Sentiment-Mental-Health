@@ -8,8 +8,8 @@ from tensorflow.keras import layers
 from tfx.components.trainer.fn_args_utils import FnArgs
 from tensorflow.keras.layers import LeakyReLU
 
-LABEL_KEY = "label"
-FEATURE_KEY = "text"
+LABEL_KEY = 'oh_label'
+FEATURE_KEY = 'Text'
 VOCAB_SIZE = 10000
 epochs = 5
 
@@ -51,25 +51,30 @@ def model_builder(hp, vectorizer):
     ### Define parameter yang digunakan untuk tuning
     num_layer = hp.Int("num_layer", min_value=1, max_value=5, step=1)
     embed_dim = hp.Int("embed_dim", min_value=16, max_value=128, step=32)
-    fc_layer = hp.Int("fc_layer", min_value=32, max_value=128, step=16)
+    fc_layer = hp.Int("fc_layer", min_value=32, max_value=64, step=16)
     lr = hp.Choice("lr", values=[1e-2, 1e-3, 1e-4])
+    # lstm_units = hp.Int("lstm_units", min_value=32, max_value=128, step=32)
 
     inputs = tf.keras.Input(shape=(1,), name=transformed_name(FEATURE_KEY), dtype=tf.string)
-    x = vectorizer(inputs)
+    reshaped_narrative = tf.reshape(inputs, [-1])
+    x = vectorizer(reshaped_narrative)
     x = layers.Embedding(VOCAB_SIZE, embed_dim, name="embedding")(x)
     x = layers.GlobalAveragePooling1D()(x)
     x = layers.Dropout(0.2)(x)
+    # x = layers.Bidirectional(layers.LSTM(lstm_units))(x)
     for _ in range(num_layer):
         x = layers.Dense(fc_layer, activation='relu')(x)
+    # x = layers.Dense(fc_layer, activation='relu')(x)
+    # x = layers.Dense(fc_layer, activation="relu")(x)
     
     x = layers.Dropout(0.2)(x)
-    outputs = layers.Dense(3, activation='softmax')(x)
+    outputs = layers.Dense(1, activation='sigmoid')(x)
 
     model = tf.keras.Model(inputs=inputs, outputs=outputs)
     model.compile(
-        loss = tf.keras.losses.SparseCategoricalCrossentropy(),
+        loss = tf.keras.losses.BinaryCrossentropy(),
         optimizer = tf.keras.optimizers.Adam(learning_rate=lr),
-        metrics = [tf.keras.metrics.SparseCategoricalAccuracy()]
+        metrics = [tf.keras.metrics.BinaryAccuracy()]
     )
 
     model.summary()
@@ -92,7 +97,7 @@ def tuner_fn(fn_args):
 
     # Callback untuk early stopping
     stop_early = tf.keras.callbacks.EarlyStopping(
-        monitor='val_sparse_categorical_accuracy', 
+        monitor='val_binary_accuracy', 
         mode='max', 
         verbose=1, 
         patience=15
@@ -107,7 +112,7 @@ def tuner_fn(fn_args):
     # )
     tuner = kt.Hyperband(
         lambda hp: model_builder(hp, vectorize_layer),
-        objective = 'val_sparse_categorical_accuracy',
+        objective = 'val_binary_accuracy',
         max_epochs = epochs,
         factor = 3,
         directory = fn_args.working_dir,

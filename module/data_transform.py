@@ -2,8 +2,8 @@
 import tensorflow as tf
 import tensorflow_transform as tft
 
-LABEL_KEY = 'label'
-FEATURE_KEY = 'text'
+LABEL_KEY = 'oh_label'
+FEATURE_KEY = 'Text'
 def transformed_name(key):
     return key + "_xf"
 
